@@ -1,4 +1,4 @@
-# $Id: LanguageTool.py,v 1.51 2005/01/21 09:57:28 tesdal Exp $ (Author: $Author: tesdal $)
+# $Id: LanguageTool.py,v 1.51.2.1 2005/02/21 01:00:57 lalo Exp $ (Author: $Author: lalo $)
 
 import os, re
 from types import StringType, UnicodeType
@@ -20,7 +20,7 @@ except ImportError:
     from interfaces import ITranslatable
 
 try:
-    from Products.PlacelessTranslationService.Negotiator import registerLangPrefsMethod
+    from Products.PlacelessTranslationService.Negotiator import negotiate
     _hasPTS = 1
 except:
     _hasPTS = None
@@ -381,8 +381,9 @@ class LanguageTool(UniqueObject, ActionProviderBase, SimpleItem):
         useDefault = 1 # this should never be disabled
 
         if not hasattr(self, 'REQUEST'): return
+        req = self.REQUEST
         
-        binding = self.REQUEST.get('LANGUAGE_TOOL', None)
+        binding = req.get('LANGUAGE_TOOL', None)
         if not isinstance(binding, LanguageBinding):
             # create new binding instance
             binding = LanguageBinding(self)
@@ -391,10 +392,14 @@ class LanguageTool(UniqueObject, ActionProviderBase, SimpleItem):
         lang = binding.setLanguageBindings(usePath, useCookie, useRequest, useDefault)
         
         # set LANGUAGE to request
-        self.REQUEST['LANGUAGE'] = lang
+        req['LANGUAGE'] = lang
         
         # set bindings instance to request
-        self.REQUEST['LANGUAGE_TOOL'] = binding
+        req['LANGUAGE_TOOL'] = binding
+
+        # hook into PTS
+        if _hasPTS:
+            req['pts_negotiator_accepted_languages'] = binding.getLanguages()
         
         return lang
 
@@ -517,35 +522,8 @@ class LanguageBinding:
         
         return (self.LANGUAGE, self.DEFAULT_LANGUAGE, self.LANGUAGE_LIST)
         
-
-class PrefsForPTS:
-    '''
-    this one should hook into pts
-    '''
-    def __init__(self, context):
-        self._env = context
-        self.languages = []
-
-        binding = context.get('LANGUAGE_TOOL')
-        if not isinstance(binding, LanguageBinding):
-            return None
-
-        self.pref = binding.getLanguageBindings()
-        self.languages = [self.pref[0],] + self.pref[2] + [self.pref[1],]
-
-        return None
- 
-    def getPreferredLanguages(self):
-        '''
-        return the list of the bound langs
-        '''
-        try:
-            return self.languages
-        except:
-            return []
-    
-if _hasPTS is not None:
-    registerLangPrefsMethod({'klass':PrefsForPTS, 'priority':100 })
-
+    security.declarePublic("getLanguages")
+    def getLanguages(self):
+        return [self.LANGUAGE] + self.LANGUAGE_LIST + [self.DEFAULT_LANGUAGE]
     
 InitializeClass(LanguageTool)
