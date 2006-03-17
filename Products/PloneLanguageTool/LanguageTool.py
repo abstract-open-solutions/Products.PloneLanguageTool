@@ -1,5 +1,6 @@
 from AccessControl import ClassSecurityInfo
 from Globals import InitializeClass
+from ZODB.POSException import ConflictError
 from OFS.SimpleItem import SimpleItem
 from Products.CMFCore.Expression import Expression
 # BBB CMF < 1.5
@@ -9,6 +10,9 @@ try:
 except ImportError:
     from Products.CMFCore.CMFCorePermissions import ManagePortal
     from Products.CMFCore.CMFCorePermissions import View
+
+# XXX TRY/EXCEPT
+from Products.CMFDynamicViewFTI.interfaces import IBrowserDefault
 
 from Products.CMFCore.ActionInformation import ActionInformation
 from Products.CMFCore.ActionProviderBase import ActionProviderBase
@@ -310,6 +314,24 @@ class LanguageTool(UniqueObject, ActionProviderBase, SimpleItem):
                 if len(item) == 2:
                     if item in self.getSupportedLanguages():
                         return item
+        except ConflictError:
+            raise
+        except:
+            pass
+        return None
+
+    security.declarePublic('getContentLanguage')
+    def getContentLanguage(self):
+        """Checks the language of the current content if not folderish."""
+        if not hasattr(self, 'REQUEST'):
+            return []
+        try: # This will actually work nicely with browserdefault as we get attribute error...
+            object = self.unrestrictedTraverse(self.REQUEST.get('PATH_TRANSLATED')) # XXX IS THE ACTUAL URL OBJECT IN REQUEST??
+            if object is not None:# and not IBrowserDefault.isImplementedBy(object): # All content has browserdefault now...
+                if object.Language() in self.getSupportedLanguages():
+                    return object.Language()
+        except ConflictError:
+            raise
         except:
             pass
         return None
@@ -371,6 +393,7 @@ class LanguageTool(UniqueObject, ActionProviderBase, SimpleItem):
     def setLanguageBindings(self):
         """Setups the current language stuff."""
         usePath = self.use_path_negotiation
+        useContent = 1
         useCookie = self.use_cookie_negotiation
         useRequest = self.use_request_negotiation
         useDefault = 1 # This should never be disabled
@@ -381,7 +404,7 @@ class LanguageTool(UniqueObject, ActionProviderBase, SimpleItem):
             # Create new binding instance
             binding = LanguageBinding(self)
         # Bind languages
-        lang = binding.setLanguageBindings(usePath, useCookie, useRequest, useDefault)
+        lang = binding.setLanguageBindings(usePath, useContent, useCookie, useRequest, useDefault)
         # Set LANGUAGE to request
         self.REQUEST['LANGUAGE'] = lang
         # Set bindings instance to request
@@ -459,14 +482,30 @@ class LanguageBinding:
         self.tool = tool
 
     security.declarePrivate('setLanguageBindings')
-    def setLanguageBindings(self, usePath=1, useCookie=1, useRequest=1, useDefault=1):
+    def setLanguageBindings(self, usePath=1, useContent=1, useCookie=1, useRequest=1, useDefault=1):
         """Setup the current language stuff."""
         langs = []
+
+        # XXX Add a useContent, add it to languagetool as well
+        # self.tool.getContentLanguage(), something like...
+        #
+        #if not IBrowserDefault.providedBy(object):
+        #    language = object.Language()
+        #    if languge != cookielanguage:
+        #        setCookie (?)
+        #else:
+        #    business as usual...
 
         if usePath:
             # This one is set if there is an allowed language in the current path
             langsPath = [self.tool.getPathLanguage()]
         else:langsPath = []
+
+        if useContent:
+            # This one is set if there is an allowed language in the current path
+            langsContent = [self.tool.getContentLanguage()]
+        else:
+            langsContent = []
 
         if useCookie:
             # If we are using the cookie stuff we provide the setter here
@@ -491,10 +530,14 @@ class LanguageBinding:
             langsDefault = []
 
         # Build list
-        langs = langsPath + langsCookie + langsRequest + langsDefault
+        langs = langsPath + langsContent + langsCookie + langsRequest + langsDefault
 
         # Filter None languages
         langs = filter(lambda x: x is not None, langs)
+
+        # Set cookie language to language
+        if useCookie and langs[0] != langsCookie:
+            self.tool.setLanguageCookie(langs[0], noredir=True)
 
         self.DEFAULT_LANGUAGE = langs[-1]
         self.LANGUAGE = langs[0]
